@@ -118,6 +118,32 @@ def load_hg2_csv(path: Path, dt_s: float = 1.0, max_gap_s: float = 5.0) -> pd.Da
     return pd.concat(segments, ignore_index=True)[COLUMNS]
 
 
+def quality_filter(
+    df: pd.DataFrame, min_current_rms_A: float = 0.1, max_start_offset_K: float = 5.0
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Drop cycles that cannot be used, by rules fixed BEFORE any model is trained.
+
+    * no load: current RMS below `min_current_rms_A` (a pure rest recording)
+    * wrong ambient label: median temperature of the first 60 s differs from the folder's
+      ambient by more than `max_start_offset_K` (the chamber was not at the labelled
+      temperature, e.g. 40degC/562_Mixed4..8 start at ~23 C)
+    Returns (kept data, table of every cycle with its checks and exclusion reason).
+    """
+    g = df.groupby("cycle_id", sort=False)
+    checks = pd.DataFrame(
+        {
+            "current_rms_A": g["current_A"].apply(lambda s: float(np.sqrt(np.mean(s**2)))),
+            "start_offset_K": g["temperature_C"].apply(lambda s: float(s.iloc[:60].median())) - g["ambient_C"].first(),
+        }
+    )
+    reason = pd.Series("", index=checks.index)
+    reason[checks["current_rms_A"] < min_current_rms_A] = "no load"
+    reason[checks["start_offset_K"].abs() > max_start_offset_K] = "ambient label mismatch"
+    checks["excluded"] = reason
+    keep = checks.index[reason == ""]
+    return df[df["cycle_id"].isin(keep)].reset_index(drop=True), checks.reset_index()
+
+
 def load_hg2_dir(
     raw_dir: Path,
     dt_s: float = 1.0,

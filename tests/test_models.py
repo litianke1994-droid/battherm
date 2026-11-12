@@ -17,11 +17,15 @@ def clean_data() -> pd.DataFrame:
     return add_features(generate_dataset(ambients_C=(0.0, 25.0, 40.0), cycles_per_ambient=3, duration_s=1800, seed=3, params=p))
 
 
-def test_physics_recovers_time_constant_and_beats_persistence(clean_data):
-    m = LumpedThermalModel(dt_s=1.0).fit(clean_data, fit_steps=30)
-    true_tau = CellParams().heat_capacity_J_per_K / CellParams().h_a_W_per_K
-    assert abs(m.params()["time_constant_s"] - true_tau) / true_tau < 0.15
-    ws = make_windows(clean_data, WindowSpec(60, 60, 20))
+def test_physics_recovers_time_constant_and_beats_persistence():
+    # Without polarisation heat (tiny R1) the simulator has the same structure as the model,
+    # so the fitted time constant must match the true one.
+    p = CellParams(r1_ref_ohm=1e-5, temp_noise_C=0.0, volt_noise_V=0.0, curr_noise_A=0.0, h_a_jitter=0.0)
+    data = add_features(generate_dataset(ambients_C=(0.0, 25.0, 40.0), cycles_per_ambient=3, duration_s=1800, seed=3, params=p))
+    m = LumpedThermalModel(dt_s=1.0).fit(data, fit_steps=30)
+    true_tau = p.heat_capacity_J_per_K / p.h_a_W_per_K
+    assert abs(m.params()["time_constant_s"] - true_tau) / true_tau < 0.05
+    ws = make_windows(data, WindowSpec(60, 60, 20))
     i = ws.future[:, :, FUTURE_FEATURES.index("current_A")]
     rmse_phys = np.sqrt(np.mean((m.predict(ws.t_now, ws.ambient, i) - ws.y) ** 2))
     rmse_pers = np.sqrt(np.mean((Persistence().predict(ws) - ws.y) ** 2))

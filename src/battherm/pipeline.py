@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import shutil
+import copy
 import tomllib
 from datetime import datetime
 from pathlib import Path
@@ -42,14 +42,31 @@ def _arrays(ws: WindowSet, sc: Scalers, base_K: np.ndarray | None) -> Arrays:
     return Arrays(sc.past.transform(ws.past), sc.future.transform(ws.future), ws.y / sc.y_std, base.astype(np.float32))
 
 
-def run(config_path: Path, root: Path = Path(".")) -> Path:
-    cfg = load_config(config_path)
+def deep_update(base: dict, overrides: dict) -> dict:
+    for k, v in overrides.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            deep_update(base[k], v)
+        else:
+            base[k] = v
+    return base
+
+
+def run(config_path: Path, root: Path = Path("."), overrides: dict | None = None) -> tuple[Path, pd.DataFrame]:
+    """Run one experiment. `overrides` (nested dict) patches the TOML config, e.g. for sweeps.
+
+    `experiment.eval_split` = "val" evaluates on the validation split and never touches the
+    test split (use it for every tuning run); "test" is for the final, pre-registered run.
+    """
+    cfg = deep_update(load_config(config_path), copy.deepcopy(overrides or {}))
     exp, seed = cfg["experiment"], cfg["experiment"]["seed"]
+    ev = exp.get("eval_split", "test")
+    if ev not in ("val", "test"):
+        raise ValueError("experiment.eval_split must be 'val' or 'test'")
     set_seed(seed)
-    out = root / exp.get("output_dir", "outputs") / f"{exp['name']}_{datetime.now():%Y%m%d_%H%M%S}"
+    out = root / exp.get("output_dir", "outputs") / f"{exp['name']}_{ev}_s{seed}_{datetime.now():%Y%m%d_%H%M%S_%f}"
     (out / "figures").mkdir(parents=True)
     (out / "models").mkdir()
-    shutil.copy(config_path, out / "config.toml")
+    (out / "config_resolved.json").write_text(json.dumps(cfg, indent=2))
     log_file = open(out / "log.txt", "w", encoding="utf-8")
 
     def log(msg: str) -> None:
@@ -79,6 +96,7 @@ def run(config_path: Path, root: Path = Path(".")) -> Path:
     ws = {
         name: make_windows(df[df["cycle_id"].isin(ids)], spec_train if name == "train" else spec_eval)
         for name, ids in split.items()
+        if name != "test" or ev == "test"  # tuning runs never even build test windows
     }
     log(f"windows: past {W} steps, horizon {H} steps | " + ", ".join(f"{k} {len(v):,}" for k, v in ws.items()))
 
@@ -91,7 +109,7 @@ def run(config_path: Path, root: Path = Path(".")) -> Path:
     info: dict[str, dict] = {}
 
     if "persistence" in enabled:
-        preds["persistence"] = Persistence().predict(ws["test"])
+        preds["persistence"] = Persistence().predict(ws[ev])
 
     physics = None
     if "physics" in enabled or "hybrid_lstm" in enabled:
@@ -100,11 +118,11 @@ def run(config_path: Path, root: Path = Path(".")) -> Path:
         log(f"physics params: {json.dumps({k: round(v, 6) for k, v in info['physics'].items()})}")
         phys_pred = {k: physics.predict(v.t_now, v.ambient, v.future[:, :, FUTURE_FEATURES.index("current_A")]) for k, v in ws.items()}
         if "physics" in enabled:
-            preds["physics"] = phys_pred["test"]
+            preds["physics"] = phys_pred[ev]
 
     if "ridge" in enabled:
         ridge = RidgeForecaster(scalers, cfg["ridge"]["alphas"], cfg["ridge"].get("past_subsample", 10)).fit(ws["train"], ws["val"])
-        preds["ridge"] = ridge.predict(ws["test"])
+        preds["ridge"] = ridge.predict(ws[ev])
         info["ridge"] = {"alpha": ridge.alpha, "val_rmse_K_by_alpha": {str(k): v for k, v in ridge.val_rmse.items()}}
         log(f"ridge: chosen alpha {ridge.alpha} (validation)")
 
@@ -117,14 +135,14 @@ def run(config_path: Path, root: Path = Path(".")) -> Path:
         arr = {k: _arrays(v, scalers, phys_pred[k] if hybrid else None) for k, v in ws.items()}
         model = build_model(kind, len(PAST_FEATURES), len(FUTURE_FEATURES), cfg)
         histories[kind] = fit(model, arr["train"], arr["val"], cfg["train"], device, seed, log)
-        preds[kind] = predict(model, arr["test"], device) * scalers.y_std
+        preds[kind] = predict(model, arr[ev], device) * scalers.y_std
         torch.save(model.state_dict(), out / "models" / f"{kind}.pt")
         info[kind] = {"n_params": sum(p.numel() for p in model.parameters()), "best_epoch": int(np.argmin(histories[kind]["val_rmse"]) + 1)}
     (out / "histories.json").write_text(json.dumps(histories, indent=2))
     (out / "model_info.json").write_text(json.dumps(info, indent=2))
 
-    # ---------------------------------------------------------------- evaluation (test split only)
-    test = ws["test"]
+    # ---------------------------------------------------------------- evaluation (one split only)
+    test = ws[ev]
     overall = pd.DataFrame([{"model": m, **evaluate.summary(test.y, p)} for m, p in preds.items()])
     by_amb = pd.concat([evaluate.grouped(test.y, p, test.ambient, "ambient_C").assign(model=m) for m, p in preds.items()])
     by_prof = pd.concat([evaluate.grouped(test.y, p, test.profile, "profile").assign(model=m) for m, p in preds.items()])
@@ -134,7 +152,7 @@ def run(config_path: Path, root: Path = Path(".")) -> Path:
     by_amb.to_csv(out / "metrics_by_ambient.csv", index=False)
     by_prof.to_csv(out / "metrics_by_profile.csv", index=False)
     pd.DataFrame(per_h).assign(horizon_s=np.arange(1, H + 1) * dt).to_csv(out / "rmse_per_horizon.csv", index=False)
-    log("\nTEST metrics (K):\n" + overall.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
+    log(f"\n{ev.upper()} metrics (K):\n" + overall.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
 
     # ---------------------------------------------------------------- figures
     fig = out / "figures"
@@ -152,7 +170,9 @@ def run(config_path: Path, root: Path = Path(".")) -> Path:
 
     log(f"\nresults written to {out}")
     log_file.close()
-    return out
+    overall.insert(0, "eval_split", ev)
+    overall.insert(1, "seed", seed)
+    return out, overall
 
 
 def _example_cycle(test: WindowSet, df: pd.DataFrame) -> str:

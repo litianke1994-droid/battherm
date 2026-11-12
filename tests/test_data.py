@@ -102,3 +102,17 @@ def test_hg2_csv_with_metadata_and_units_row(tmp_path):
     validate(df)
     assert df["ambient_C"].iloc[0] == 10.0 and df["profile"].iloc[0] == "UDDS"
     assert len(df) == 20 and (df["current_A"] == -2.0).all()
+
+
+def test_quality_filter_drops_rest_and_mislabelled_cycles():
+    from battherm.data.hg2 import quality_filter
+
+    def cyc(cid, amb, temp, current):
+        n = 120
+        return pd.DataFrame({"cycle_id": cid, "profile": "UDDS", "time_s": np.arange(n, dtype=float),
+                             "current_A": current, "voltage_V": 3.7, "temperature_C": temp, "ambient_C": amb})
+
+    df = pd.concat([cyc("ok", 25.0, 24.0, -3.0), cyc("rest", 25.0, 24.0, 0.0), cyc("label", 40.0, 23.0, -3.0)])
+    kept, checks = quality_filter(df)
+    assert set(kept["cycle_id"]) == {"ok"}
+    assert dict(zip(checks["cycle_id"], checks["excluded"])) == {"ok": "", "rest": "no load", "label": "ambient label mismatch"}
