@@ -1,0 +1,46 @@
+# Synthetic data: pipeline debugging and sanity checks. Not a result to report as "real".
+[experiment]
+name = "synthetic"
+seed = 42
+data_path = "data/processed/synthetic.csv.gz"
+output_dir = "outputs"
+
+[windows]
+past_s = 120          # history the model sees
+horizon_s = 60        # forecast length
+train_stride_s = 5
+eval_stride_s = 10
+
+[split]
+# Whole cycles go to one split. Random draw per ambient temperature.
+test_fraction = 0.2
+val_fraction = 0.15
+
+[physics]
+fit_window_s = 30     # integration window for the least-squares fit
+
+[ridge]
+alphas = [0.01, 0.1, 1.0, 10.0, 100.0]
+past_subsample = 10
+
+[models]
+enabled = ["persistence", "physics", "ridge", "lstm", "cnn", "hybrid_lstm"]
+
+[train]
+device = "auto"
+epochs = 40
+batch_size = 256
+lr = 1e-3
+weight_decay = 0.0
+patience = 6
+grad_clip = 1.0
+
+[lstm]
+hidden = 64
+layers = 1
+dropout = 0.0
+
+[cnn]
+channels = 32
+kernel = 5
+enc_layers = 4
