@@ -1,9 +1,9 @@
 """Loader for the public LG 18650HG2 dataset (McMaster University, Kollmeyer et al., 2020).
 
-Source (verify version and licence before use): Mendeley Data, "LG 18650HG2 Li-ion Battery
-Data and Example Deep Neural Network xEV SOC Estimator Script", doi:10.17632/cp3473x7xv.
+Source: Mendeley Data, "LG 18650HG2 Li-ion Battery Data and Example Deep Neural Network xEV SOC
+Estimator Script", V3, doi:10.17632/cp3473x7xv.3, CC BY 4.0 (`battherm download-hg2`).
 
-Expected layout of the *original* dataset (待核实 against the files you download):
+Layout of the *original* dataset (checked against V3, 70 drive-cycle files):
     <raw_dir>/<ambient folder, e.g. "25degC" or "n10degC">/<id>_<PROFILE>.csv
 Each CSV starts with metadata lines, then a header row containing columns such as
 "Prog Time", "Voltage", "Current", "Temperature", sometimes followed by a units row.
