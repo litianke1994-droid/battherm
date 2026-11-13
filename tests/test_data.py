@@ -61,6 +61,21 @@ def test_split_is_disjoint_and_covers_all(synth):
     assert sum(len(v) for v in s.values()) == len(all_ids)
     s2 = split_cycles(cycles, {"test_profiles": ["cc"], "val_profiles": ["pulse"]}, seed=0)
     assert set(cycles.set_index("cycle_id").loc[s2["test"], "profile"]) == {"cc"}
+    s3 = split_cycles(cycles, {"val_ambients": [0.0], "test_profiles": ["cc"]}, seed=0)
+    c = cycles.set_index("cycle_id")
+    assert set(c.loc[s3["val"], "ambient_C"]) == {0.0} and set(c.loc[s3["train"], "ambient_C"]) == {25.0}
+    assert "cc" not in set(c.loc[s3["val"], "profile"])  # test rules take precedence
+
+
+def test_relative_temperature_removes_absolute_level(synth):
+    from battherm.data.windows import PAST_FEATURES, relative_temperature
+
+    ws = make_windows(add_features(synth), WindowSpec(60, 30, 10))
+    rel = relative_temperature(ws)
+    iT, iA = PAST_FEATURES.index("temperature_C"), PAST_FEATURES.index("ambient_C")
+    assert np.allclose(rel.past[:, -1, iT], 0.0)  # T[t] - T[t]
+    assert np.allclose(rel.past[:, 0, iA], ws.t_now - ws.ambient)
+    assert np.array_equal(rel.y, ws.y) and np.array_equal(rel.past[:, :, 0], ws.past[:, :, 0])
 
 
 def test_scalers_use_train_statistics_only(synth):

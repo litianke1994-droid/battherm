@@ -32,6 +32,24 @@ def test_physics_recovers_time_constant_and_beats_persistence():
     assert rmse_phys < 0.5 * rmse_pers
 
 
+def test_arrhenius_physics_is_monotone_and_extrapolates():
+    # Fit on 0..25 C only; the true temperature coefficient of R at 25 C is Ea / T^2 ~ 0.028 1/K.
+    p = CellParams(r1_ref_ohm=1e-5, temp_noise_C=0.0, volt_noise_V=0.0, curr_noise_A=0.0, h_a_jitter=0.0)
+    data = add_features(generate_dataset(ambients_C=(0.0, 10.0, 25.0, 40.0), cycles_per_ambient=3, duration_s=1800, seed=3, params=p))
+    train, hot = data[data["ambient_C"] < 30], data[data["ambient_C"] == 40]
+    m = LumpedThermalModel(dt_s=1.0, heat="arrhenius").fit(train, fit_steps=30)
+    true_beta = p.activation_K / 298.15**2
+    assert abs(m.params()["beta_per_K"] - true_beta) < 0.01
+    T = np.linspace(-20, 60, 81)
+    heat = m.rate(np.full_like(T, 3.0), T, T) - m.rate(np.zeros_like(T), T, T)
+    assert np.all(np.diff(heat) < 0)  # less Joule heat in a hotter cell, also outside the fit range
+    ws = make_windows(hot, WindowSpec(60, 60, 20))
+    i = ws.future[:, :, FUTURE_FEATURES.index("current_A")]
+    rmse_arr = np.sqrt(np.mean((m.predict(ws.t_now, ws.ambient, i) - ws.y) ** 2))
+    rmse_pers = np.sqrt(np.mean((Persistence().predict(ws) - ws.y) ** 2))
+    assert rmse_arr < 0.5 * rmse_pers
+
+
 @pytest.mark.parametrize("kind", ["lstm", "cnn"])
 def test_net_shapes_and_causality(kind):
     torch.manual_seed(0)

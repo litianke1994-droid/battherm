@@ -1,0 +1,55 @@
+# LG 18650HG2, extrapolation to an unseen ambient temperature (40 C), v2 (post-hoc).
+# Identical to hg2_ambient_holdout.toml except for the two options below, which were chosen on the
+# 25 C pseudo-extrapolation protocol (hg2_ambient_dev.toml) AFTER the v1 test result was seen.
+[experiment]
+# Hyper-parameters below were frozen after validation sweeps (outputs/sweeps, docs/tuning_log.md).
+name = "hg2_ambient_holdout_v2"
+seed = 42
+data_path = "data/processed/hg2.csv.gz"
+output_dir = "outputs"
+
+[windows]
+past_s = 300          # tuned on validation: 120 / 300 / 600 s tried
+horizon_s = 60
+relative_temperature = true  # v2: no absolute temperature in the network inputs
+train_stride_s = 5
+eval_stride_s = 10
+
+[split]
+test_ambients = [40.0]
+val_profiles = ["Mixed7"]
+
+[physics]
+fit_window_s = 30
+heat = "arrhenius"    # v2: monotone R(T); v1 used a quadratic in (T - 25)
+
+[ridge]
+alphas = [0.01, 0.1, 1.0, 10.0, 100.0]
+past_subsample = 10
+
+[hybrid]
+physics_as_input = true  # physics forecast is also a decoder input
+
+[models]
+enabled = ["persistence", "physics", "ridge", "lstm", "cnn", "hybrid_lstm"]
+
+[train]
+device = "auto"
+epochs = 80
+batch_size = 512
+lr = 1e-3
+weight_decay = 0.0
+patience = 10
+lr_plateau = true     # halve lr when validation RMSE stalls (tuned)
+lr_plateau_patience = 3
+grad_clip = 1.0
+
+[lstm]
+hidden = 128          # tuned: 64 / 128
+layers = 1
+dropout = 0.0
+
+[cnn]
+channels = 64         # tuned: 32 / 64
+kernel = 5
+enc_layers = 4

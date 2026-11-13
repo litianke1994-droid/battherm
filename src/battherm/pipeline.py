@@ -22,6 +22,7 @@ from battherm.data.windows import (
     WindowSpec,
     add_features,
     make_windows,
+    relative_temperature,
     split_cycles,
 )
 from battherm.models.baselines import Persistence, RidgeForecaster
@@ -104,6 +105,9 @@ def run(config_path: Path, root: Path = Path("."), overrides: dict | None = None
         for name, ids in split.items()
         if name != "test" or ev == "test"  # tuning runs never even build test windows
     }
+    if w.get("relative_temperature", False):
+        ws = {k: relative_temperature(v) for k, v in ws.items()}
+        log("past inputs: temperature relative to T[t]; ambient replaced by T[t] - T_amb")
     log(f"windows: past {W} steps, horizon {H} steps | " + ", ".join(f"{k} {len(v):,}" for k, v in ws.items()))
 
     scalers = Scalers.fit(ws["train"])  # TRAIN ONLY
@@ -119,7 +123,7 @@ def run(config_path: Path, root: Path = Path("."), overrides: dict | None = None
 
     physics = None
     if "physics" in enabled or "hybrid_lstm" in enabled:
-        physics = LumpedThermalModel(dt).fit(df[df["cycle_id"].isin(split["train"])], steps(cfg["physics"]["fit_window_s"]))
+        physics = LumpedThermalModel(dt, cfg["physics"].get("heat", "poly")).fit(df[df["cycle_id"].isin(split["train"])], steps(cfg["physics"]["fit_window_s"]))
         info["physics"] = physics.params()
         log(f"physics params: {json.dumps({k: round(v, 6) for k, v in info['physics'].items()})}")
         phys_pred = {k: physics.predict(v.t_now, v.ambient, v.future[:, :, FUTURE_FEATURES.index("current_A")]) for k, v in ws.items()}

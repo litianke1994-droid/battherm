@@ -74,18 +74,35 @@ def make_windows(df: pd.DataFrame, spec: WindowSpec) -> WindowSet:
     return WindowSet(**{k: np.concatenate(v) for k, v in parts.items()})
 
 
+def relative_temperature(ws: WindowSet) -> WindowSet:
+    """Replace the absolute temperatures in the past inputs by relative ones (v2 option):
+
+        temperature_C -> T[j] - T[t]      (recent history relative to the forecast origin)
+        ambient_C     -> T[t] - T_amb     (how far the cell is above its surroundings)
+
+    The target (a rise) does not depend on the absolute level either, so the network has no
+    input outside the training range when it is applied at an unseen ambient temperature.
+    Information about the temperature-dependent resistance is still in the voltage response.
+    The physics model keeps using `t_now` and `ambient`, which are not changed."""
+    past = ws.past.copy()
+    iT, iA = PAST_FEATURES.index("temperature_C"), PAST_FEATURES.index("ambient_C")
+    past[:, :, iT] = ws.past[:, :, iT] - ws.t_now[:, None]
+    past[:, :, iA] = (ws.t_now - ws.ambient)[:, None]
+    return WindowSet(past, ws.future, ws.y, ws.t_now, ws.ambient, ws.time_s, ws.cycle_id, ws.profile, dict(ws.extras))
+
+
 # ---------------------------------------------------------------- splits
 def split_cycles(cycles: pd.DataFrame, cfg: dict, seed: int) -> dict[str, list[str]]:
     """Assign whole cycles to train / val / test (the group split that prevents leakage).
 
-    1. Explicit rules first: `test_profiles`, `test_ambients`, `val_profiles`.
+    1. Explicit rules first: `test_profiles`, `test_ambients`, `val_profiles`, `val_ambients`.
     2. Then `test_fraction` / `val_fraction` of the remaining cycles, drawn at random
        per ambient so every ambient temperature stays represented in training.
     """
     rng = np.random.default_rng(seed)
     prof, amb = cycles["profile"], cycles["ambient_C"]
     test = prof.isin(cfg.get("test_profiles", [])) | amb.isin(cfg.get("test_ambients", []))
-    val = prof.isin(cfg.get("val_profiles", [])) & ~test
+    val = (prof.isin(cfg.get("val_profiles", [])) | amb.isin(cfg.get("val_ambients", []))) & ~test
     remaining = cycles[~test & ~val]
 
     drawn: dict[str, list[str]] = {"test": [], "val": []}
