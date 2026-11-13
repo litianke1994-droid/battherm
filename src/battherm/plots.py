@@ -36,20 +36,20 @@ def _style(ax, title: str, xlabel: str, ylabel: str) -> None:
     ax.tick_params(colors=INK_2)
 
 
-def rmse_vs_horizon(per_h: dict[str, np.ndarray], dt_s: float, path: Path) -> None:
+def rmse_vs_horizon(per_h: dict[str, np.ndarray], dt_s: float, path: Path, split: str = "test") -> None:
     fig, ax = plt.subplots(figsize=(7, 4))
     for name, r in per_h.items():
         x = np.arange(1, len(r) + 1) * dt_s
         ax.plot(x, r, color=MODEL_COLORS.get(name, INK), linewidth=2, label=name)
         ax.annotate(name, (x[-1], r[-1]), xytext=(4, 0), textcoords="offset points", va="center", fontsize=8, color=INK_2)
-    _style(ax, "Test RMSE vs forecast horizon", "horizon (s)", "RMSE (K)")
+    _style(ax, f"{split.capitalize()} RMSE vs forecast horizon", "horizon (s)", "RMSE (K)")
     ax.legend(frameon=False, fontsize=8)
     fig.tight_layout()
     fig.savefig(path, dpi=150)
     plt.close(fig)
 
 
-def rmse_by_group(table: pd.DataFrame, group: str, path: Path) -> None:
+def rmse_by_group(table: pd.DataFrame, group: str, path: Path, split: str = "test") -> None:
     """Grouped bars: one group per ambient/profile, one bar per model."""
     models = list(table["model"].unique())
     groups = list(table[group].unique())
@@ -60,7 +60,7 @@ def rmse_by_group(table: pd.DataFrame, group: str, path: Path) -> None:
         sub = table[table["model"] == m].set_index(group).reindex(groups)
         ax.bar(x + k * width - 0.4 + width / 2, sub["rmse_K"], width * 0.92, color=MODEL_COLORS.get(m, INK), label=m)
     ax.set_xticks(x, [str(g) for g in groups])
-    _style(ax, f"Test RMSE by {group}", group, "RMSE (K)")
+    _style(ax, f"{split.capitalize()} RMSE by {group}", group, "RMSE (K)")
     ax.legend(frameon=False, fontsize=8, ncol=min(len(models), 6))
     fig.tight_layout()
     fig.savefig(path, dpi=150)

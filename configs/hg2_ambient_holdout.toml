@@ -1,13 +1,14 @@
 # LG 18650HG2, EXTRAPOLATION to an unseen ambient temperature (the hard case).
 # Expect data-driven models to degrade here; the physics prior should help the hybrid model.
 [experiment]
+# Hyper-parameters below were frozen after validation sweeps (outputs/sweeps, docs/tuning_log.md).
 name = "hg2_ambient_holdout"
 seed = 42
 data_path = "data/processed/hg2.csv.gz"
 output_dir = "outputs"
 
 [windows]
-past_s = 120
+past_s = 300          # tuned on validation: 120 / 300 / 600 s tried
 horizon_s = 60
 train_stride_s = 5
 eval_stride_s = 10
@@ -23,24 +24,29 @@ fit_window_s = 30
 alphas = [0.01, 0.1, 1.0, 10.0, 100.0]
 past_subsample = 10
 
+[hybrid]
+physics_as_input = true  # physics forecast is also a decoder input
+
 [models]
 enabled = ["persistence", "physics", "ridge", "lstm", "cnn", "hybrid_lstm"]
 
 [train]
 device = "auto"
-epochs = 60
+epochs = 80
 batch_size = 512
 lr = 1e-3
 weight_decay = 0.0
-patience = 8
+patience = 10
+lr_plateau = true     # halve lr when validation RMSE stalls (tuned)
+lr_plateau_patience = 3
 grad_clip = 1.0
 
 [lstm]
-hidden = 64
+hidden = 128          # tuned: 64 / 128
 layers = 1
 dropout = 0.0
 
 [cnn]
-channels = 32
+channels = 64         # tuned: 32 / 64
 kernel = 5
 enc_layers = 4

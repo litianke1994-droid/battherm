@@ -37,9 +37,15 @@ def load_config(path: Path) -> dict:
         return tomllib.load(f)
 
 
-def _arrays(ws: WindowSet, sc: Scalers, base_K: np.ndarray | None) -> Arrays:
-    base = np.zeros_like(ws.y) if base_K is None else base_K / sc.y_std
-    return Arrays(sc.past.transform(ws.past), sc.future.transform(ws.future), ws.y / sc.y_std, base.astype(np.float32))
+def _arrays(ws: WindowSet, sc: Scalers, base_K: np.ndarray | None, base_as_input: bool = False) -> Arrays:
+    """Scale one window set. For the hybrid model, `base_K` is the physics forecast: the network
+    output is added to it (residual learning) and, if `base_as_input`, it is also fed to the
+    decoder as an extra future channel so the network knows what it is correcting."""
+    base = np.zeros_like(ws.y) if base_K is None else (base_K / sc.y_std).astype(np.float32)
+    future = sc.future.transform(ws.future)
+    if base_K is not None and base_as_input:
+        future = np.concatenate([future, base[:, :, None]], axis=2)
+    return Arrays(sc.past.transform(ws.past), future, ws.y / sc.y_std, base)
 
 
 def deep_update(base: dict, overrides: dict) -> dict:
@@ -132,8 +138,9 @@ def run(config_path: Path, root: Path = Path("."), overrides: dict | None = None
         set_seed(seed)
         log(f"training {kind} on {device} ...")
         hybrid = kind.startswith("hybrid")
-        arr = {k: _arrays(v, scalers, phys_pred[k] if hybrid else None) for k, v in ws.items()}
-        model = build_model(kind, len(PAST_FEATURES), len(FUTURE_FEATURES), cfg)
+        base_in = hybrid and cfg.get("hybrid", {}).get("physics_as_input", True)
+        arr = {k: _arrays(v, scalers, phys_pred[k] if hybrid else None, base_in) for k, v in ws.items()}
+        model = build_model(kind, len(PAST_FEATURES), arr["train"].future.shape[2], cfg)
         histories[kind] = fit(model, arr["train"], arr["val"], cfg["train"], device, seed, log)
         preds[kind] = predict(model, arr[ev], device) * scalers.y_std
         torch.save(model.state_dict(), out / "models" / f"{kind}.pt")
@@ -156,9 +163,9 @@ def run(config_path: Path, root: Path = Path("."), overrides: dict | None = None
 
     # ---------------------------------------------------------------- figures
     fig = out / "figures"
-    plots.rmse_vs_horizon(per_h, dt, fig / "rmse_vs_horizon.png")
-    plots.rmse_by_group(by_amb, "ambient_C", fig / "rmse_by_ambient.png")
-    plots.rmse_by_group(by_prof, "profile", fig / "rmse_by_profile.png")
+    plots.rmse_vs_horizon(per_h, dt, fig / "rmse_vs_horizon.png", ev)
+    plots.rmse_by_group(by_amb, "ambient_C", fig / "rmse_by_ambient.png", ev)
+    plots.rmse_by_group(by_prof, "profile", fig / "rmse_by_profile.png", ev)
     if histories:
         plots.learning_curves(histories, fig / "learning_curves.png")
     cid = _example_cycle(test, df)

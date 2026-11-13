@@ -60,7 +60,11 @@ def fit(model: nn.Module, train: Arrays, val: Arrays, cfg: dict, device: torch.d
     opt = torch.optim.Adam(model.parameters(), lr=cfg["lr"], weight_decay=cfg.get("weight_decay", 0.0))
     loss_fn = nn.MSELoss()
     loader = _loader(train, cfg["batch_size"], True, seed)
-    history = {"epoch": [], "train_rmse": [], "val_rmse": [], "seconds": []}
+    # Optional: halve the learning rate when validation RMSE stalls for `lr_plateau_patience` epochs
+    sched = None
+    if cfg.get("lr_plateau", False):
+        sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, factor=0.5, patience=cfg.get("lr_plateau_patience", 3))
+    history = {"epoch": [], "train_rmse": [], "val_rmse": [], "seconds": [], "lr": []}
     best_rmse, best_state, bad_epochs = float("inf"), None, 0
 
     for epoch in range(1, cfg["epochs"] + 1):
@@ -80,6 +84,9 @@ def fit(model: nn.Module, train: Arrays, val: Arrays, cfg: dict, device: torch.d
         history["train_rmse"].append(float(np.sqrt(sq_sum / n)))
         history["val_rmse"].append(val_rmse)
         history["seconds"].append(time.time() - t0)
+        history["lr"].append(opt.param_groups[0]["lr"])
+        if sched is not None:
+            sched.step(val_rmse)
         log(f"  epoch {epoch:3d}  train {history['train_rmse'][-1]:.4f}  val {val_rmse:.4f}  (scaled units)")
 
         if val_rmse < best_rmse - 1e-5:
